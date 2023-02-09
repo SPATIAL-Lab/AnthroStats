@@ -121,8 +121,8 @@ Region 2 is more equivocal, but generally the isotopic evidence suggests that Ea
 
 *****
 
-Hopefully that is helpful and has piqued your interest! For additional examples and functions, please check out the package vignette on [CRAN](https://cran.r-project.org/web/packages/assignR/vignettes/assignR.html). If you have questions, comments, or suggestions, please feel free to email me at <gabe.bowen@utah.edu> or post issues to our [GitHub Repo](https://github.com/SPATIAL-Lab).
+Hopefully that is helpful and has piqued your interest! For additional examples and functions, please check out the package vignette on [CRAN](https://cran.r-project.org/web/packages/assignR/vignettes/assignR.html). If you have questions, comments, or suggestions, please feel free to email me at <gabe.bowen@utah.edu> or post issues to the **assignR** [GitHub Repo](https://github.com/SPATIAL-Lab).
 
-More materials for this lecture and demo are available in the [GitHub repo](https://github.com/SPATIAL-Lab/AnthroStats). 
+More materials for this lecture and demo are available in the [GitHub Repo](https://github.com/SPATIAL-Lab/AnthroStats) for this workshop.
 
 *****
