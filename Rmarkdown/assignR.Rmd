@@ -1,0 +1,126 @@
+---
+title: "assignR"
+author: "Gabriel Bowen"
+date: "2023-02-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+This vignette introduces **assignR** with a focus on human geolocation. The basic analysis workflow is: 
+
+* Obtain one or more relevant isoscapes covering the area of interest (`getIsoscapes`)
+* (Potentially) obtain GIS mask constraining the region of interest and/or prior information constraining the location of origin
+* (Potentially) obtain known-origin data representing the analyte of interest, for use in isoscape calibration (`subOrigData`)
+* (Potentially) calibrate the isoscape(s) using the known origin data (`calRaster`)
+* Enter measured isotopic values for the unknown sample(s)
+* Generate posterior probability maps for the origin of each sample (`pdRaster`)
+
+After probabilities have been obtained, **assignR** offers a number of tools that can be used to summarize, test hypotheses, or draw inference from the results. If time allows we will illustrate a few:
+
+* Compare probabilities for two different user-defined locations or regions (`oddsRatio`)
+* Generate posterior probabilities for a population of samples under different assumptions (`jointP` and `unionP`)
+* Summarize the directionality and distance of movement for one or more individuals (`wDist`)
+* Convert probabilities to binary classifications, aka assignments, of origin (`qtlRaster`)
+
+For our example, we'll focus on evaluating the origin of a human hair sample analyzed for forensic casework. We will assume the contiguous USA as the region of origin. 
+
+All of the code below can be run on any platform using only **assignR** and a couple other select R-packages.
+
+*****
+Let's load **assignR** and two other packages we'll need. You may need to `install.packages` if you don't already have these in your R library.
+
+```{r load, message=FALSE, warning=FALSE, results="hide"}
+library(assignR)
+library(raster)
+library(sp)
+```
+
+*****
+The data available from this case ([Saltair Sally](https://doi.org/10.1007/s00442-014-2945-3)) include oxygen isotope ratios for a strand of human hair, which have been interpreted to reflect movement of the individual over time and growth of hair in four different isotopically-distinct regions.
+
+Oxygen isoscapes for environmental water, including tap water for the USA, can be accessed through the `getIsoscapes` function:
+
+```{r getIsoscapes, out.width='85%', fig.asp=0.6}
+twiso = getIsoscapes("USTap")
+plot(twiso)
+```
+
+Notice that the data we downloaded includes multiple isoscape layers. In this case we will just want to work with d18O (the predicted mean tap water value at each grid cell) and an uncertainty layer. Notice there are two uncertainty layers (se and sd)...which to use? I'd recommend you refer to the documentation file! Notice that the message returned to your console when you run `getIsoscapes` gives you a link to that file, which contains details and citation information. In this case, the sd layer is probably most appropriate. It includes uncertainty associated with the predictions of the mean values (the se part) and residual variance between individual sample values and the modeled mean (resulting from local anomalies, temporal variation, etc.).
+
+Let's update our data object to include only these two layers:
+
+```{r updateIsoscapes, out.width='80%', fig.asp = 0.4}
+twiso = stack(twiso$d18o, twiso$d18o_sd)
+plot(twiso)
+```
+
+Sweet, we have an isoscape! Let's stop and think, though. This data product represents tap water. Tap water is not hair, and we know that although there are [robust relationships](https://doi.org/10.1073/pnas.0712228105) between oxygen isotope values of hair and drinking water the values are not equal due to isotopic fractionation. So we still need to transform our water isoscape into a hair isoscape. In fact, we might want to stop and question whether the tap water isoscape is the right representation of the oxygen 'source' to our sample analyte. For modern humans in the USA tap water is probably the best estimate. But in another location or time tap water might not exist. Even if it does, it might not be the best representation of the water source for a salamander!
+
+To transform the isoscape, we need oxygen isotope data for hair samples from individuals who were living in known (or at least reasonably well constrained) locations. This will allow us to compare the known-origin data with the isoscape, and develop a mathematical relationship between the two. **assignR** includes a database of known-origin samples which may be useful in some cases (like this one!). We'll use the GIS shapefile 'states' which is included in **assignR** to only select data within the contiguous USA.
+
+```{r subOrigData, fig.width=6, fig.asp=0.8}
+kod = subOrigData("d18O", group = "Modern human", mask = states)
+
+```
+
+We have 210 samples to work with, which is pretty decent. Notice that they do not provide exhaustive coverage of the area of interest, however. This is one reason that we often start with an environmental isoscapes (in this case tap water) and then transform it to represent an analyte of interest, rather than working directly from the analyte data: many thousands of tap water data exhaustively documenting the USA are available, allowing development of robust spatial models that don't require significant extrapolation.
+
+Now let's combine the isoscape with the known origin data to produce a *human hair* isoscape.
+
+```{r calRaster, out.width='45%', fig.asp=0.8}
+hairiso = calRaster(kod, twiso)
+```
+
+You can explore the output here, but `calRaster` has fit a weighted ordinary least squares regression and applied it to our tap water isoscape to produce a new, hair isoscape. The new uncertainty layer reflects both uncertainty in the tap water isoscape and the residual variance in the regression. Notice that the amount of residual variance is not small: different individuals can exhibit quite a bit of variation around the local mean.
+
+Now we have a 'target' that we can use for interpretation of human hair oxygen isotope data. It reflects a prediction of the mean and variance of hair values that we would expect to see at any given location on the map. Using this (and an assumption that we expect variation around the local mean to be normally distributed), we can calculate the probability of observing a given hair value at a given location. By integrating across the whole map, we can compute posterior probabilities for all locations. First we'll input some data for the Saltair Sally samples, then use `pdRaster` to do the computation.
+
+```{r pdRaster, out.width='45%'}
+ssdata = data.frame("ID" = c("Region_1", "Region_2", "Region_3", "Region_4"), "d18O" = c(9.9, 8.4, 9.2, 11))
+sspost = pdRaster(hairiso, ssdata)
+```
+
+Nice! We now have a set of maps that represents the probability of origin distributions for each of the 4 isotopic regions that the victim inhabited. What stands out to you here? One thing that often bothers folks is the very low values. Our probabilities max out at 4 x 10-7? Yikes! Consider what is represented here, though. The isoscape we are working with has about 13 million grid cells, so the prior probability that a sample comes from any single cell on the map is tiny (~7 x 10-8). One way to think about what we are seeing is that the most likely locations on the map are now ~5 times more likely to be the origin of the sample than they were before we considered the isotope data.
+
+Another way to work with these numbers is to use them in comparisons, for example to test hypotheses. In this case, the states of California and Utah were areas of specific interest to investigators. We can use the function `oddsRatio` to compare probabilities in these two areas. First we need to prepare a shapefile that contains the two regions of interest.
+
+```{r oddsRatio}
+ca_ut = states[states$STATE_NAME %in% c("California", "Utah"),]
+ca_ut$STATE_NAME
+oddsRatio(sspost, ca_ut)
+```
+
+The reported ratios suggest that for regions 1-3 there is a subequal probability the the victim resided in each state. However, California is about 3 times larger than Utah (reflected in the ratio of cell numbers reported above), so in actuality the isotopic data being generally more consistent with Utah, increase our willingness to consider the state as the source by a factor of 2 to 4. For region 4, the isotopically data are essentially a wash; they slightly increase the probability of Utah as a location of origin relative to the prior, but the impact is minimal.
+
+What if law enforcement had asked us a specific question: tell us all of the locations where the victim may have lived at any point in the past 2 years (about the time represented in the hair segment) so that we can search for potential witnesses in these areas. To accomplish this, we need to obtain the *union* of the probabilities for the four isotopic locations, reflecting the probability that any of the hair isotope values is consistent with a given location:
+
+```{r unionP, fig.width=6, fig.asp=0.8}
+ssup = unionP(sspost)
+```
+
+You can see that this smooths out the distributions represented in each of the four isotopic regions and gives us a general focus on the western USA. This may be difficult for law enforcement to work with, however. In determining where to focus their resources, Where do they draw the line? This is a decision that can't be made from isotopes or probabilities alone. It also requires an assessment of priorities and resources. Let's say that they gave us a more specific ask: limit our search to 10% of the area of the contiguous USA. Our goal should be to identify the locations that have the highest probability and are thus most likely to give a return on investment. 
+
+```{r qtlRaster, fig.width=6, fig.asp=0.8}
+qtlRaster(ssup, 0.1)
+```
+
+The `qtlRaster` function simply orders the posterior probabilities and selects the highest values, up to some threshold (in this case until the collection of cells represents 10% of the map area). You can review the help pages for this function for other ways it can be used. 
+
+Finally, let's say that we were asked a different question. Salt Lake City, Utah, where the victim was recovered, sits at the junction of two major highways. One runs North-South, and the other East-West. There was suspicion that the victim may have regularly traveled along one or both of these routes, and law enforcement wants to know what the isotopic evidence suggests...what was the most likely direction(s) of the victim's movements relative to Salt Lake City? We can assess this using the function `wDist`, which uses the posterior probabilities to calculate weighted distance and direction to each grid cell in the area of interest. We first need to define a reference location for each probability layer (here, Salt Lake City).
+
+```{r wDist, fig.width=6, fig.asp=0.8}
+slc = SpatialPoints(data.frame(rep(-111.9, 4), rep(40.7, 4)), CRS("+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs"))
+sswd = wDist(sspost, slc)
+plot(sswd)
+```
+
+Region 2 is more equivocal, but generally the isotopic evidence suggests that East-West movement is much more consistent with the isotopic data.
+
+*****
+
+Hopefully that is helpful and has piqued your interest! For additional examples and functions, please check out the package vignette on [CRAN](https://cran.r-project.org/web/packages/assignR/vignettes/assignR.html). If you have questions, comments, or suggestions, please feel free to email me at <gabe.bowen@utah.edu> or post issues to our [GitHub Repo](https://github.com/SPATIAL-Lab).
+
+*****
